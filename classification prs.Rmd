@@ -1,0 +1,1285 @@
+---
+title: "Classication - UFC 1993-2019 fights and statistics"
+author: "Bedil Karimov"
+date: "01/28/2020"
+output:
+  html_document:
+    df_print: paged
+  ioslides_presentation: default
+  slidy_presentation: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(purrr)
+library(DT)
+library(stringr)
+library(magrittr)
+library(raster)
+library(rstan)
+library(tidyr)
+library(dplyr)
+library(corrplot)
+library(mltools)
+library(scorecard)
+library(data.table)
+library(zoo)
+library(caret)
+library(tidyverse)
+library(tree)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(here)
+library(neuralnet)
+library(boot)
+library(glmnet)
+library(randomForest)
+library(MASS)
+library(pROC)
+library(here)
+library(e1071)
+library(tibble) 
+library(xgboost)
+library(randomForest)
+library(ggthemes)
+
+
+```
+## Structure
+
+- Introduction about UFC & MMA
+- Data Analysis
+- Modeling
+- Conclusion
+
+## About
+
+- Mixed Martial Arts 
+- UFC (Ultimate fighting Championship)
+- Rules
+
+## Dataset
+
+Content
+
+R_ and B_ prefix signifies red and blue corner fighter stats respectively
+_opp_ containing columns is the average of damage done by the opponent on the fighter
+KD is number of knockdowns
+SIG_STR is no. of significant strikes 'landed of attempted'
+SIG_STR_pct is significant strikes percentage
+TOTAL_STR is total strikes 'landed of attempted'
+TD is no. of takedowns
+TD_pct is takedown percentages
+
+
+
+<https://www.kaggle.com/rajeevw/ufcdata?select=preprocessed_data.csv>.
+
+## Description 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Processed data
+fightdata <- read.csv(file = '/Users/bedilkarimov/Downloads/Data/ufc.csv')
+
+# Initial data
+df2 <- read.csv(file = '/Users/bedilkarimov/Downloads/Data/ufc1.csv')
+
+# Avoiding unnecessary columns
+df <- dplyr::select(fightdata, -contains("opp"))
+df <- df[, -c(4, 6, 22, 23, 26, 27, 34, 36:38, 40, 45, 47, 63, 64, 67,68, 75, 77:79, 88:102, 104,106:107,110)]
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Table caption
+htmltools::save_html(datatable(df2), file = 'test.html')
+
+df2 %>% 
+  datatable(
+            class="cell-border" ,
+            editable = 'column',
+            caption='Table 1. Data on ICOs', 
+            rowname = F,
+            filter = 'top',
+            options = list(pageLength = 20, autoWidth = TRUE))
+```
+
+
+## Data Analysis
+
+Analysis of title fights
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Data analysis
+df2 <- df2 %>%
+  filter(title_bout == "True")
+
+# Title fights
+total <- c(df2$R_fighter, df2$B_fighter)
+df_total <- as.data.frame(total)
+df_total %>% group_by(total) %>% filter(n() > 6) %>%  
+  ggplot(aes(x = total)) +
+  geom_bar(fill = "darkblue") +
+  coord_flip() +
+  theme_wsj()
+df_total %>% group_by(total) %>% filter(n() > 12) %>% count(total)
+
+```
+
+- Fighters with the most title bouts (> 6)
+
+## Fighter's stance
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+total_stance <- c(df2$R_Stance, df2$B_Stance)
+
+# Fighter Stance
+df_total_stance <- as.data.frame(total_stance)
+df_total_stance %>%  ggplot + 
+  aes(x = total_stance) +
+  geom_bar(fill = "darkblue") +
+  coord_flip() +
+  theme_wsj()
+
+```
+
+- most of fighters are Orthodox (righthand)
+
+### Title fights length
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df2 %>% ggplot + 
+  aes(x = no_of_rounds) +
+  geom_bar(fill = "darkblue") +
+  coord_flip() +
+  theme_wsj() 
+```
+
+- fights mostly are 5 rounds (max) but second most is 3 rounds
+- reasons can be that most of fighters are used to fight 3 round and they loose at 3rd
+
+
+## Data Cleaning
+
+Mainly:
+
+1. Getting the ratio of shots landed
+2. Age grouping and one hot encoding
+
+```{r message=FALSE, warning=FALSE}
+df$title_bout = ifelse(df$title_bout == "True", 1, 0)
+df$Winner = ifelse(df$Winner == "Red", 1, 0)
+
+sum(is.na(df))
+
+df <- df %>%
+  mutate(B_avg_body_prc = B_avg_BODY_landed/B_avg_BODY_att,
+         B_avg_clinch_prc = B_avg_CLINCH_landed/B_avg_CLINCH_att,
+         B_avg_dist_prc = B_avg_DISTANCE_landed/B_avg_DISTANCE_att,
+         B_avg_ground_prc = B_avg_GROUND_landed/B_avg_GROUND_att,
+         B_avg_head_prc = B_avg_HEAD_landed/B_avg_HEAD_att,
+         B_avg_leg_prc = B_avg_LEG_landed/B_avg_LEG_att,
+         R_avg_body_prc = R_avg_BODY_landed/R_avg_BODY_att,
+         R_avg_clinch_prc = R_avg_CLINCH_landed/R_avg_CLINCH_att,
+         R_avg_dist_prc = R_avg_DISTANCE_landed/R_avg_DISTANCE_att,
+         R_avg_ground_prc = R_avg_GROUND_landed/R_avg_GROUND_att,
+         R_avg_head_prc = R_avg_HEAD_landed/R_avg_HEAD_att,
+         R_avg_leg_prc = R_avg_LEG_landed/R_avg_LEG_att)
+
+df <- dplyr::select(df, -contains(c("landed", "att", "PASS", "REV", "lbs", "losses")))
+
+df <- df %>%
+  mutate(B_AgeGroup = ifelse(B_age <= 20, "20 and under", ifelse(B_age > 20 & B_age <=25, "21 to 25", ifelse(B_age > 25 & B_age <= 30, "25 to 30", ifelse(B_age > 30 & B_age <= 35, "31 to 35", ifelse(B_age > 35 & B_age <= 40, "36 to 40","Over 40"))))),
+         R_AgeGroup = ifelse(R_age <= 20, "20 and under", ifelse(R_age > 20 & R_age <=25, "21 to 25", ifelse(R_age > 25 & R_age <= 30, "25 to 30", ifelse(R_age > 30 & R_age <= 35, "31 to 35",  ifelse(B_age > 35 & B_age <= 40, "36 to 40", "Over 40"))))))
+
+# removing B_age and A_age
+df <- df[, -c(27, 28, 30, 32)]
+
+# imoute means for na
+for(i in 1:ncol(df)){
+  df[is.na(df[,i]), i] <- mean(df[,i], na.rm = TRUE)
+}
+
+df <- one_hot(as.data.table(df))
+
+```
+
+
+## Correlation plot
+
+Correalation plot and removing the correlated variables
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+options(repr.plot.width = 100, repr.plot.height = 100)
+M <-cor(df)
+corrplot(M, type="upper", order="hclust")
+
+```
+
+## Removing variables
+
+- The most correlated ones are avoided
+
+```{r message=FALSE, warning=FALSE}
+
+# avoidign highly correalted features
+df2 <- cor(df)
+hc <- findCorrelation(df2, cutoff=0.7) # putt any value as a "cutoff" 
+hc <- sort(hc)
+df <- df[,-c(6, 12, 14, 17, 24, 25)]
+
+# changing names before modeling
+colnames(df) <- gsub(" ", "_",  colnames(df))
+
+```
+
+## Variable selection
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Variable selection
+
+set.seed(123)
+training_obs <- createDataPartition(df$Winner, 
+                                    p = 0.7, 
+                                    list = FALSE) 
+ufc.train <- df[training_obs,]
+ufc.test  <- df[-training_obs,]
+
+
+parameters_rf <- expand.grid(mtry = 2:15)
+ctrl_oob <- trainControl(method = "oob", classProbs = TRUE)
+
+datausa.rf3 <-
+  train(Winner ~ . ,
+        data = ufc.train,
+        method = "rf",
+        ntree = 100,
+        nodesize = 100,
+        tuneGrid = parameters_rf,
+        trControl = ctrl_oob,
+        importance = TRUE)
+
+varImpPlot(datausa.rf3$finalModel,
+           sort = TRUE,
+           main = "Importance of predictors",
+           n.var = 20,
+           type = 1) # mean decrease in node impurity
+
+```
+
+- the most imporatnt features are selected
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df1 <- df[, c("Winner", "R_total_rounds_fought", "R_AgeGroup_Over_40", "B_avg_body_prc", "R_avg_TD_pct", "R_avg_body_prc",
+              "title_bout", "B_avg_head_prc", "B_total_title_bouts", "R_Reach_cms", "B_avg_head_prc",  "B_AgeGroup_31_to_35",
+              "R_total_title_bouts"
+)]
+
+df1$Winner = ifelse(df1$Winner == 1, "Yes", "No")
+
+#df1$Winner <- factor(df1$Winner, levels = c(1, 0))
+
+set.seed(123)
+training_obs <- createDataPartition(df1$Winner, 
+                                    p = 0.7, 
+                                    list = FALSE) 
+ufc.train <- df1[training_obs,]
+ufc.test  <- df1[-training_obs,]
+
+```
+
+## Final data
+
+- Glipse of data
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df1 %>% glimpse()
+```
+
+- Train and test splits
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+table(ufc.train$Winner)/length(ufc.train$Winner)
+table(ufc.test$Winner)/length(ufc.test$Winner)
+
+```
+
+
+
+## Modeling
+
+1. Classification Trees
+2. Ensembling method
+3. Bagging
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Modelling
+
+model1.formula <- Winner ~ R_total_rounds_fought + R_AgeGroup_Over_40 + B_avg_body_prc + R_avg_TD_pct + R_avg_body_prc + 
+title_bout + B_avg_head_prc + B_total_title_bouts + R_Reach_cms + B_avg_head_prc + B_AgeGroup_31_to_35 + R_total_title_bouts
+
+# Split based on gini
+ufc.tree1 <- 
+  rpart(model1.formula , # model formula
+        data = ufc.train, # data
+        method = "class") # type of the tree: classification
+
+ufc.tree1
+
+fancyRpartPlot(ufc.tree1)
+
+summary(ufc.tree1)
+
+# Variable importance
+# R_avg_TD_pct    R_AgeGroup_Over_40        R_avg_body_prc           R_Reach_cms        B_avg_head_prc R_total_rounds_fought 
+# 51                    24                    19                     3                     2                     1 
+# B_avg_body_prc 
+# 1                 
+
+```
+
+- the most important variables are Takedown percentage landed (wrestling skills) and age over 40 (experience)
+
+## Split based on importance
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Split on importance
+# Information gain criteria
+ufc.tree2 <- 
+  rpart(model1.formula,
+        data = ufc.train,
+        method = "class",
+        parms = list(split = 'information'))
+
+ufc.tree2
+
+fancyRpartPlot(ufc.tree2)
+
+```
+
+- The same tree
+
+## Stopping criteria
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Stopping criteria
+# Virtually identical as for Gini
+
+ufc.tree3 <- 
+  rpart(model1.formula,
+        data = ufc.train,
+        method = "class",
+        minsplit = 70, 
+        minbucket = 35,
+          maxdepth = 10)
+
+ufc.tree3
+
+fancyRpartPlot(ufc.tree3)
+
+
+```
+
+- Still the same tree
+
+
+
+## Pruning
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Still the same tree
+
+# Pruning
+
+# Dealing with Tree complexity
+ufc.tree4 <- 
+  rpart(model1.formula,
+        data = ufc.train,
+        method = "class",
+        minsplit = 100, 
+        minbucket = 50,
+        maxdepth = 30,
+        # we don't impose any restriction on the tree growth 
+        cp = -1)
+fancyRpartPlot(ufc.tree4)
+
+```
+
+- the complex plot (w/o pruning)
+
+## Prediction and analysis
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+pred.tree4 <- predict(ufc.tree4,
+                      ufc.train,
+                      type = "class")
+head(pred.tree4)
+
+```
+
+Confusion matrix
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+confusionMatrix(table(pred.tree4, as.factor(ufc.train$Winner)),
+                positive = "Yes") 
+```
+
+- Based on the confusion matrix we have 69% of accuracy 
+
+
+Next is Choosing the complexity parameter
+
+- Optimal number of splits and complexity parameter
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+printcp(ufc.tree4)
+
+opt <- which.min(ufc.tree4$cptable[, "xerror"])
+opt
+
+cp <- ufc.tree4$cptable[opt, "CP"]
+cp
+
+
+```
+
+Pruned tree
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+ufc.tree4p <- 
+  prune(ufc.tree4, cp = 0.0047114)
+fancyRpartPlot(ufc.tree4p)
+
+```
+
+- Different than the tree which we had initially (more complex for sure)
+
+Initial Plot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fancyRpartPlot(ufc.tree1)
+
+```
+
+## Prediction on train dataset and ROC plot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pred.train.tree4  <- predict(ufc.tree4,  ufc.train)
+pred.train.tree4p <- predict(ufc.tree4p, ufc.train)
+
+# ROC curve
+ROC.train.tree4  <- roc(as.numeric(ufc.train$Winner == "Yes"), 
+                        pred.train.tree4[, 1])
+
+ROC.train.tree4p <- roc(as.numeric(ufc.train$Winner == "Yes"), 
+                        pred.train.tree4p[, 1])
+
+
+# ROC plot
+list(
+  ROC.train.tree4  = ROC.train.tree4,
+  ROC.train.tree4p = ROC.train.tree4p
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "tree4 = ", 
+                         round(100*(2 * auc(ROC.train.tree4) - 1), 1), "%, ",
+                         "tree4p = ", 
+                         round(100*(2 * auc(ROC.train.tree4p) - 1), 1), "% ")) +
+  theme_bw() + coord_fixed() +
+  # scale_color_brewer(palette = "Paired") +
+  scale_color_manual(values = RColorBrewer::brewer.pal(n = 4, 
+                                                       name = "Paired")[c(1, 3)])
+
+```
+
+- Obviously, the pruned model has much more lower value of the Gini coefficient.
+
+
+## Prediction on test dataset and ROC plot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pred.test.tree4  <- predict(ufc.tree4, 
+                            ufc.test)
+pred.test.tree4p <- predict(ufc.tree4p, 
+                            ufc.test)
+ROC.test.tree4  <- roc(as.numeric(ufc.test$Winner == "Yes"), 
+                       pred.test.tree4[, 1])
+
+ROC.test.tree4p <- roc(as.numeric(ufc.test$Winner == "Yes"), 
+                       pred.test.tree4p[, 1])
+
+list(
+  ROC.train.tree4  = ROC.train.tree4,
+  ROC.test.tree4   = ROC.test.tree4,
+  ROC.train.tree4p = ROC.train.tree4p,
+  ROC.test.tree4p  = ROC.test.tree4p
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "tree4 = ", 
+                         round(100*(2 * auc(ROC.train.tree4) - 1), 1), "%, ",
+                         "tree4p = ", 
+                         round(100*(2 * auc(ROC.train.tree4p) - 1), 1), "% ",
+                         "Gini TEST: ",
+                         "tree4 = ", 
+                         round(100*(2 * auc(ROC.test.tree4) - 1), 1), "%, ",
+                         "tree4p = ", 
+                         round(100*(2 * auc(ROC.test.tree4p) - 1), 1), "% "
+  )) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+
+```
+
+- Both models perform worse with test sets
+
+## Alternative way of tree estimation by using CV
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Alternative way of estimating the tree
+tc <- trainControl(method = "cv",
+                   number = 10, 
+                   classProbs = TRUE,
+                   summaryFunction = twoClassSummary)
+
+
+modelLookup("rpart")
+
+cp.grid <- expand.grid(cp = seq(0, 0.03, 0.001))
+set.seed(123456789)
+
+
+#ufc.train1 <- ufc.train %>%
+#  mutate(Winner = ifelse(Winner == 1,"Yes", "No"))
+
+#ufc.test1 <- ufc.test %>%
+#  mutate(Winner = ifelse(Winner == 1,"Yes", "No"))
+
+ufc.tree5 <- 
+  train(model1.formula,
+        data = ufc.train, 
+        method = "rpart", 
+        metric = "ROC",
+        trControl = tc,
+        tuneGrid  = cp.grid)
+
+
+
+ufc.tree5
+
+pred.train.tree5 <- predict(ufc.tree5, 
+                            ufc.train)
+ROC.train.tree5  <- roc(as.numeric(ufc.train$Winner == "Yes"), 
+                        pred.train.tree4[, 1])
+
+pred.test.tree5  <- predict(ufc.tree5, 
+                            ufc.train)
+ROC.test.tree5  <- roc(as.numeric(ufc.test$Winner == "Yes"), 
+                       pred.test.tree4[, 1])
+
+cat("Gini train = ", 2 * ROC.train.tree5$auc - 1, "\n", sep = "")
+
+cat("Gini test  = ", 2 * ROC.test.tree5$auc - 1,  "\n", sep = "")
+
+
+```
+
+- We have almost the same Gini as for model 4
+
+## 2. Ensembling 
+
+Models used :
+- logistic regression,
+- quadratic discriminant analysis,
+- random forests 
+- XGBoost
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+fiveStats <- function(...) c(twoClassSummary(...), 
+                             defaultSummary(...))
+
+ctrl_cv5 <- trainControl(method = "cv",
+                         number = 5, 
+                         # saving all predictions
+                         savePredictions = "final",
+                         summaryFunction = fiveStats,
+                         classProbs = TRUE)
+
+# Models used
+# logistic regression
+# quadratic discriminant analysis
+# penalized logistic regression (LASSO)
+# random forests
+# xgboost
+
+set.seed(123)
+
+# Logit
+ufc.logit <- 
+  train(model1.formula, 
+        data = ufc.train, 
+        method = "glm",
+        family = "binomial", 
+        preProcess = c("center", "scale"),
+        trControl = ctrl_cv5)
+
+# QDA
+ufc.qda <- 
+  train(model1.formula, 
+        data = ufc.train, 
+        preProcess = c("center", "scale"),
+        method = "qda",
+        trControl = ctrl_cv5)
+
+
+# RF
+
+ufc.rf4 <- train(model1.formula,
+                      data = ufc.train,
+                      preProcess = c("center", "scale"),
+                      method = "rf",
+                      ntree = 70,
+                      nodesize = 35,
+                      trControl = ctrl_cv5)
+
+
+
+# XGBoost
+parametry_xgb6a <- 
+  expand.grid(nrounds = 320,
+              max_depth = 9,
+              eta = 0.06, 
+              gamma = 1,
+              colsample_bytree = 0.7,
+              min_child_weight = 200,
+              subsample = 0.9)
+set.seed(123)
+ufc.xgb6a <- 
+  train(model1.formula,
+        data = ufc.train,
+        method = "xgbTree",
+        preProcess = c("center", "scale"),
+        trControl = ctrl_cv5,
+        tuneGrid  = parametry_xgb6a)
+```
+
+
+
+
+## Prediction for train
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Name of the models
+models <- c("logit", "qda", "rf4", "xgb6a")
+
+head(predict(object = ufc.logit, 
+             data   = ufc.train,
+             type   = "prob"))
+
+"logit" %>% 
+  paste0("ufc.", .) %>% 
+  get() %>% 
+  predict(data = ufc.train,
+          type = "prob") %>% 
+  head()
+
+prediction_Yes <- function(model, dane) {
+  prognoza <- 
+    model %>% 
+    paste0("ufc.", .) %>% 
+    get() %>% 
+    predict(dane,
+            type = "prob") %>% 
+    .[, "Yes"]
+  return(prognoza)
+} 
+
+
+prediction_Yes("logit", ufc.train) %>% head()
+
+
+# Predictions for train
+preds.train <- 
+  sapply(models, 
+         function(x) prediction_Yes(x, ufc.train)) %>% 
+  data.frame()
+head(preds.train)
+
+cor(preds.train)
+
+corrplot::corrplot(cor(preds.train))
+
+preds.train$Winner <- ufc.train$Winner
+
+```
+
+The values are not so large (beside qda and xgb). As low as possible is the best option.
+
+
+
+Prediction for test
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+preds.test <- 
+  sapply(models,
+         function(x) prediction_Yes(x, ufc.test)) %>% 
+  data.frame()
+head(preds.test)
+
+corrplot::corrplot(cor(preds.test))
+
+
+preds.test$Winner <- ufc.test$Winner
+```
+
+- Slightly larger values than in the training dataset (qda inc, rf4 dec)
+
+
+## Votings
+ 
+- Majority Voting
+
+Train set
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+
+# The rule is as follows: if at least 3 models (ouf of 5 considered) predict success, then the prediction is Yes, otherwise No.
+
+preds.train$major.voting <-
+  ifelse(rowSums(preds.train[, models] > 0.5) > 2,
+         "Yes", 
+         "No")
+
+head(preds.train)
+
+
+```
+
+Test set
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+preds.test$major.voting <- 
+  ifelse(rowSums(preds.test[, models] > 0.5) > 2,
+         "Yes", 
+         "No")
+
+head(preds.train) 
+```
+
+
+Weighted voting for train set
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Weighted voting
+ufc.logit$resample
+
+"logit" %>% 
+  paste0("ufc.", .) %>% 
+  get() %>% 
+  .["resample"] %>% 
+  .[[1]] %>% 
+  .[,"ROC"] %>% 
+  mean()
+
+# for individual models
+models.wagi <- sapply(models,
+                      function(x) x %>% 
+                        paste0("ufc.", .) %>% 
+                        get() %>% 
+                        .["resample"] %>% 
+                        .[[1]] %>% 
+                        .[,"ROC"] %>% 
+                        mean())
+models.wagi
+
+# the better the model, the more we trust in it. weights must be standardized, so they sum up to 1.
+
+models.wagi <- models.wagi/sum(models.wagi)
+models.wagi
+
+models.wagi * 5
+
+head(preds.train[, models])
+
+head(preds.train[, models]) * (models.wagi * 5)
+
+
+```
+
+- We can apply them in the “voting” formula. 
+- The rule is that if at least 3 models (after weighting) predict success then the outcome is Yes, otherwise No
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+preds.train$weighted.voting <-
+  ifelse(rowSums((preds.train[, models] * models.wagi*5) > 0.5) > 2,
+         "Yes", 
+         "No")
+
+preds.test$weighted.voting <-
+  ifelse(rowSums((preds.test[, models] * models.wagi*5) > 0.5) > 2,
+         "Yes", 
+         "No")
+
+table(preds.test$major.voting,
+      preds.test$weighted.voting)
+```
+
+## Averaging and stacking
+
+- Simple averaging
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# We calculate the average probability of success for each observation.
+preds.train$simple.averaging <-
+  ifelse(rowMeans(preds.train[, models]) > 0.5,
+         "Yes", 
+         "No")
+preds.test$simple.averaging <-
+  ifelse(rowMeans(preds.test[, models]) > 0.5,
+         "Yes", 
+         "No")
+
+preds.train$simple.averaging.p <-
+  rowMeans(preds.train[, models])
+preds.test$simple.averaging.p <-
+  rowMeans(preds.test[, models])
+
+head(preds.test)
+
+```
+
+- Weighted averaging
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Weighted averaging
+as.matrix(head(preds.train[, models])) %*%
+  matrix(models.wagi, ncol = 1)
+
+# apply that on the whole dataset
+preds.train$weighted.averaging <-
+  ifelse(as.matrix(preds.train[, models]) %*% 
+           matrix(models.wagi, ncol = 1) > 0.5,
+         "Yes", 
+         "No")
+preds.test$weighted.averaging <-
+  ifelse(as.matrix(preds.test[, models]) %*%
+           matrix(models.wagi, ncol = 1) > 0.5,
+         "Yes", 
+         "No")
+
+# Let us also save the averaged probabilities of success.
+preds.train$weighted.averaging.p <-
+  as.matrix(preds.train[, models]) %*% 
+  matrix(models.wagi, ncol = 1)
+
+preds.test$weighted.averaging.p <-
+  as.matrix(preds.test[, models]) %*% 
+  matrix(models.wagi, ncol = 1)
+
+head(preds.test)
+```
+
+## Stacking
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# we take out predictions of success for each observation in the cross-validation process
+str(ufc.logit$pred)
+head(ufc.logit$pred$Yes)
+
+"logit" %>% 
+  paste0("ufc.", .) %>% 
+  get() %>% 
+  .["pred"] %>% 
+  # this is a list
+  .[[1]] %>% 
+  .[, "Yes"] %>% 
+  head()
+
+preds_cv <- 
+  sapply(models,
+         function(x) x %>%
+           paste0("ufc.", .) %>%
+           get() %>% 
+           .["pred"] %>% 
+           # this is a list
+           .[[1]] %>% 
+           .[,"Yes"]) %>% 
+  data.frame()
+head(preds_cv)
+
+if (0) {
+  preds_cv <-
+    data.frame(
+      logit = ufc.logit$pred$Yes,
+      qda   = ufc.qda$pred$Yes,
+      lasso = ufc.lasso$pred$Yes,
+      rf4   = ufc.rf4$pred$Yes,
+      xgb6a = ufc.xgb6a$pred$Yes 
+    )
+  head(preds_cv)
+}
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Let us include the index of the observations to the predictions set 
+preds_cv$RowIndex <- ufc.logit$pred$rowIndex
+
+# sorting appropriately
+preds_cv <- 
+  preds_cv %>% 
+  arrange(RowIndex)
+
+preds_cv$Winner <- ufc.train$Winner
+
+# Top layer, logistic
+(stacking.formula <- 
+    as.formula(paste0("Winner ~ ",
+                      paste0(models, collapse = " +")))
+)
+
+# estimation
+set.seed(123)
+ufc.stacking.logit <- 
+  train(stacking.formula, 
+        data = preds_cv, 
+        method = "glm",
+        family = "binomial", 
+        preProcess = c("center", "scale"),
+        trControl = ctrl_cv5)
+
+```
+
+Prediction on train and test
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+
+preds.train$stacking.logit <- 
+  predict(ufc.stacking.logit,
+          newdata = preds_cv)
+
+# probablities
+preds.train$stacking.logit.p <- 
+  predict(ufc.stacking.logit,
+          newdata = preds_cv, 
+          type = "prob")[, "Yes"]
+
+
+# use the model to produce predictions on the TESTING dataset
+preds.test$stacking.logit <- 
+  predict(ufc.stacking.logit,
+          newdata = preds.test[, models])
+
+# probablities
+preds.test$stacking.logit.p <- 
+  predict(ufc.stacking.logit,
+          newdata = preds.test[, models],
+          type = "prob")[, "Yes"]
+head(preds.train)
+head(preds.test)
+
+```
+
+## ROC curve plot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# ROC
+ufc.ROC.test.logit <- roc(as.numeric(ufc.test$Winner == "Yes"), preds.test$logit)
+
+ufc..ROC.test.qda      <- roc(as.numeric(ufc.test$Winner == "Yes"), preds.test$qda)
+
+# ufc.ROC.test.lasso <- roc(as.numeric(ufc.test$Winner == "Yes"), preds.test$lasso)
+
+ufc.ROC.test.rf4  <- roc(as.numeric(ufc.test$Winner == "Yes"), preds.test$rf4)
+
+ufc.ROC.test.xgb6a    <- roc(as.numeric(ufc.test$Winner == "Yes"), preds.test$xgb6a)
+
+ufc.ROC.test.stacking <- roc(as.numeric(ufc.test$Winner == "Yes"), preds.test$stacking.logit.p)
+
+
+
+list(
+  ufc.ROC.test.logit    = ufc.ROC.test.logit,
+  ufc..ROC.test.qda      = ufc..ROC.test.qda,
+  #ufc.ROC.test.lasso    = ufc.ROC.test.lasso,
+  ufc.ROC.test.rf4      = ufc.ROC.test.rf4,
+  ufc.ROC.test.xgb6a    = ufc.ROC.test.xgb6a,
+  ufc.ROC.test.stacking = ufc.ROC.test.stacking
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(
+    title = "Gini TEST",
+    subtitle = paste0("logit = ", 
+                      round(100 * (2 * auc(ufc.ROC.test.logit) - 1), 3), "%, ",
+                      "rpart = ", 
+                      round(100 * (2 * auc(ufc..ROC.test.qda) - 1), 3), "%, ",
+                      #"lasso = ", 
+                     # round(100 * (2 * auc(ufc.ROC.test.lasso) - 1), 3), "%, ",
+                      "rf4 = ", 
+                      round(100 * (2 * auc(ufc.ROC.test.rf4) - 1), 3), "%, ", 
+                      "xgb6a = ", 
+                      round(100 * (2 * auc(ufc.ROC.test.xgb6a) - 1), 3), "%, ", 
+                      "stacking = ", 
+                      round(100 * (2 * auc(ufc.ROC.test.stacking) - 1), 3), "% ")
+  ) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Set2")
+
+
+```
+
+- Based on ROC Logit model and Stacking method slightly outperform other models
+
+## Bagging
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+n <- nrow(ufc.train)
+
+# we create an empty list to collect results 
+results_logit <- list()
+
+ufc.train$Winner <- as.factor(ufc.train$Winner)
+
+for (sample in 1:25) {
+  message(sample)
+  # we draw n-element sample (with replacement) 
+  set.seed(1234 + sample)
+  data_sample <- 
+    ufc.train[sample(x = 1:n, 
+                         size = n,
+                         replace = TRUE),]
+  # paste as the next element of the list 
+  results_logit[[sample]] <- glm(model1.formula,
+                                 data_sample, 
+                                 family = binomial(link = "logit"))
+  rm(data_sample)
+}
+```
+
+Predictions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Predictions
+
+ufc.test$Winner <- as.factor(ufc.test$Winner)
+
+predict(object = results_logit[[1]],
+        newdata = ufc.test,
+        type = "response") %>%  
+  head()
+
+ufc.pred_bag <- 
+  sapply(results_logit,
+         function(x) 
+           predict(object = x,
+                   newdata = ufc.test,
+                   type = "response")) %>% 
+  data.frame()
+
+hist(rowSums(ufc.pred_bag < 0.5), 
+     breaks = 0:25,
+     main = "Frequency of votes for single observations")
+```
+
+- We can see that for most observations, the result of “voting” is not equal
+
+Confusion matrix and comparison
+
+- Bagging
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ufc.pred_bag_final <-
+  ifelse(rowSums(ufc.pred_bag < 0.5) > 25/2,
+         "No", "Yes") %>% 
+  factor(., levels = c("No", "Yes"))
+
+confusionMatrix(data = ufc.pred_bag_final,
+                reference = ufc.test$Winner,
+                positive = "Yes")
+```
+
+- Logit
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ctrl_nocv <- trainControl(method = "none")
+ufc.logit <- 
+  train(model1.formula, 
+        data = ufc.train, 
+        method = "glm",
+        family = "binomial", 
+        trControl = ctrl_nocv)
+
+confusionMatrix(data = predict(ufc.logit,
+                               newdata = ufc.test),
+                reference = ufc.test$Winner,
+                positive = "Yes")
+```
+
+- Almost no improvement after bagging
+
+## ROC plot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Predictions
+ufc.pred_bag_final2 <- rowMeans(ufc.pred_bag)
+
+ufc.ROC.test.bag <-
+  roc(as.numeric(ufc.test$Winner == "Yes"), 
+      ufc.pred_bag_final2)
+
+ufc.ROC.test.logit <-
+  roc(as.numeric(ufc.test$Winner == "Yes"), 
+      predict(ufc.logit, newdata = ufc.test, type = "prob")[, "Yes"])
+
+# ROC plot
+list(
+  ufc.ROC.test.bag   = ufc.ROC.test.bag,
+  ufc.ROC.test.logit = ufc.ROC.test.logit) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TEST: ",
+                         "bag = ", 
+                         round(100 * (2 * auc(ufc.ROC.test.bag) - 1), 3), "%, ",
+                         "logit = ", 
+                         round(100 * (2 * auc(ufc.ROC.test.logit) - 1), 3), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Set2")
+```
+
+## Subbagging
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Subbagging
+# an empty list for results
+results_logit2 <- list()
+
+for (sample in 1:25) {
+  message(sample)
+  # we draw n-element sample (with replacement) 
+  set.seed(12345 + sample)
+  data_sample <- 
+    ufc.train[sample(1:n, 
+                         # an important difference below!
+                         size = n/2, 
+                         replace = FALSE),]
+  # paste as the next element of the list
+  results_logit2[[sample]] <- glm(model1.formula,
+                                  data_sample, 
+                                  family = binomial(link = "logit"))
+  rm(data_sample)
+}
+
+# calculating forcast
+ufc.pred_subbag <- 
+  sapply(results_logit2,
+         function(x) 
+           predict(object = x,
+                   newdata = ufc.test,
+                   type = "response")) %>% 
+  data.frame()
+
+
+# prediction - Majority vote
+ufc.pred_subbag_final <-
+  ifelse(rowSums(ufc.pred_subbag < 0.5) > 31/2,
+         "No", "Yes") %>% 
+  factor(., levels = c("No", "Yes"))
+
+
+```
+
+Confusion matrix on test data
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Quality of the model
+confusionMatrix(data = ufc.pred_subbag_final,
+                reference = ufc.test$Winner,
+                positive = "Yes")
+```
+
+- The accuracy is almost the same as for bagging (no improvement)
+
+## ROC plot
+
+- Examine visually differences in averaged probabilities
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# comparison to bagging
+ufc.pred_subbag_final2 <- rowMeans(ufc.pred_subbag)
+
+
+tibble(
+  ufc.pred_bag_final2,
+  ufc.pred_subbag_final2
+) %>%
+  arrange(ufc.pred_subbag_final2) %>%
+  mutate(obs = row_number()) %>%
+  gather(key = model, value = pred, -obs) %>%
+  ggplot(aes(x = obs, y = pred, col = model)) +
+  geom_line()
+
+# Not that much difference between the two
+
+ufc.ROC.test.subbag <-
+  roc(as.numeric(ufc.test$Winner == "Yes"), 
+      ufc.pred_subbag_final2)
+
+list(
+  ufc.ROC.test.subbag = ufc.ROC.test.subbag,
+  ufc.ROC.test.logit  = ufc.ROC.test.logit
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TEST: ",
+                         "subbag = ", 
+                         round(100 * (2 * auc(ufc.ROC.test.subbag) - 1), 3), "%, ",
+                         "logit = ", 
+                         round(100 * (2 * auc(ufc.ROC.test.logit) - 1), 3), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+
+```
+
+- A bit better than bagging but still negligible improvement
+
+## Conclusion
+
+1. Wrestling wins!
+2. Experience is the key!
+3. Boxing is crucial! (even in TDs)
+
+
+
+
+
+
+
